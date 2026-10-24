@@ -265,7 +265,7 @@ public class EditSession implements Extent, AutoCloseable {
             Extent extent;
 
             // These extents are ALWAYS used
-            extent = traceIfNeeded(sideEffectExtent = new SideEffectExtent(world));
+            extent = traceIfNeeded(sideEffectExtent = new SideEffectExtent(world, changeSet));
             if (watchdog != null) {
                 // Reset watchdog before world placement
                 WatchdogTickingExtent watchdogExtent = new WatchdogTickingExtent(extent, watchdog);
@@ -884,10 +884,7 @@ public class EditSession implements Extent, AutoCloseable {
      * @param editSession a new {@link EditSession} to perform the undo in
      */
     public void undo(EditSession editSession) {
-        UndoContext context = new UndoContext();
-        context.setExtent(editSession.bypassHistory);
-        Operations.completeBlindly(ChangeSetExecutor.createUndo(changeSet, context));
-        editSession.internalFlushSession();
+        replayHistory(editSession, ChangeSetExecutor.Type.UNDO);
     }
 
     /**
@@ -896,10 +893,30 @@ public class EditSession implements Extent, AutoCloseable {
      * @param editSession a new {@link EditSession} to perform the redo in
      */
     public void redo(EditSession editSession) {
+        replayHistory(editSession, ChangeSetExecutor.Type.REDO);
+    }
+
+    private void replayHistory(EditSession editSession, ChangeSetExecutor.Type type) {
         UndoContext context = new UndoContext();
         context.setExtent(editSession.bypassHistory);
-        Operations.completeBlindly(ChangeSetExecutor.createRedo(changeSet, context));
-        editSession.internalFlushSession();
+        boolean postEditSimulation = editSession.sideEffectExtent != null
+            && editSession.sideEffectExtent.isPostEditSimulationEnabled();
+        if (editSession.sideEffectExtent != null) {
+            // Restore supports and their dependents before allowing physics to run.
+            editSession.sideEffectExtent.setPostEditSimulationEnabled(true);
+        }
+        try {
+            Operations.completeBlindly(type == ChangeSetExecutor.Type.UNDO
+                ? ChangeSetExecutor.createUndo(changeSet, context) : ChangeSetExecutor.createRedo(changeSet, context));
+        } finally {
+            try {
+                editSession.internalFlushSession();
+            } finally {
+                if (editSession.sideEffectExtent != null) {
+                    editSession.sideEffectExtent.setPostEditSimulationEnabled(postEditSimulation);
+                }
+            }
+        }
     }
 
     /**

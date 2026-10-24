@@ -22,12 +22,15 @@ package com.sk89q.worldedit.history.changeset;
 import com.google.common.collect.Iterators;
 import com.sk89q.worldedit.history.change.BlockChange;
 import com.sk89q.worldedit.history.change.Change;
+import com.sk89q.worldedit.history.change.SideEffectBlockChange;
 import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldedit.util.LocatedBlock;
 import com.sk89q.worldedit.util.collection.LocatedBlockList;
 
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -47,6 +50,7 @@ public class BlockOptimizedHistory extends ArrayListHistory {
 
     private final LocatedBlockList previous = new LocatedBlockList();
     private final LocatedBlockList current = new LocatedBlockList();
+    private final Map<BlockVector3, SideEffectBlockChange> sideEffects = new LinkedHashMap<>();
 
     @Override
     public void add(Change change) {
@@ -55,10 +59,24 @@ public class BlockOptimizedHistory extends ArrayListHistory {
         if (isRecordingChanges()) {
             if (change instanceof BlockChange blockChange) {
                 BlockVector3 position = blockChange.position();
+                SideEffectBlockChange earlier = sideEffects.remove(position);
                 if (!previous.containsLocation(position)) {
-                    previous.add(position, blockChange.previous());
+                    previous.add(position, earlier == null ? blockChange.previous() : earlier.getChange().previous());
                 }
                 current.add(position, blockChange.current());
+            } else if (change instanceof SideEffectBlockChange sideEffect) {
+                BlockChange blockChange = sideEffect.getChange();
+                BlockVector3 position = blockChange.position();
+                if (!previous.containsLocation(position)) {
+                    SideEffectBlockChange earlier = sideEffects.get(position);
+                    BlockChange combined = new BlockChange(position,
+                        earlier == null ? blockChange.previous() : earlier.getChange().previous(), blockChange.current());
+                    if (combined.previous().equals(combined.current())) {
+                        sideEffects.remove(position);
+                    } else {
+                        sideEffects.put(position, new SideEffectBlockChange(combined));
+                    }
+                }
             } else {
                 super.add(change);
             }
@@ -69,6 +87,7 @@ public class BlockOptimizedHistory extends ArrayListHistory {
     public Iterator<Change> forwardIterator() {
         return Iterators.concat(
                 super.forwardIterator(),
+                sideEffects.values().iterator(),
                 Iterators.transform(current.iterator(), BlockOptimizedHistory::createChange));
     }
 
@@ -76,11 +95,12 @@ public class BlockOptimizedHistory extends ArrayListHistory {
     public Iterator<Change> backwardIterator() {
         return Iterators.concat(
                 super.backwardIterator(),
-                Iterators.transform(previous.reverseIterator(), BlockOptimizedHistory::createChange));
+                Iterators.transform(previous.reverseIterator(), BlockOptimizedHistory::createChange),
+                sideEffects.values().iterator());
     }
 
     @Override
     public int size() {
-        return super.size() + previous.size();
+        return super.size() + previous.size() + sideEffects.size();
     }
 }

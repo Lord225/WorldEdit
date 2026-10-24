@@ -23,6 +23,8 @@ import com.sk89q.worldedit.WorldEditException;
 import com.sk89q.worldedit.extent.AbstractDelegateExtent;
 import com.sk89q.worldedit.function.operation.Operation;
 import com.sk89q.worldedit.function.operation.RunContext;
+import com.sk89q.worldedit.history.changeset.ChangeSet;
+import com.sk89q.worldedit.internal.wna.BlockChangeCapture;
 import com.sk89q.worldedit.math.BlockVector2;
 import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldedit.util.SideEffect;
@@ -40,6 +42,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import javax.annotation.Nullable;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -49,6 +52,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 public class SideEffectExtent extends AbstractDelegateExtent {
 
     private final World world;
+    private final @Nullable ChangeSet changeSet;
     private final Map<BlockVector3, BlockState> positions = BlockMap.create();
     private final Set<BlockVector2> dirtyBiomes = new HashSet<>();
     private SideEffectSet sideEffectSet = SideEffectSet.defaults();
@@ -65,9 +69,20 @@ public class SideEffectExtent extends AbstractDelegateExtent {
      * @param world the world
      */
     public SideEffectExtent(World world) {
+        this(world, null);
+    }
+
+    /**
+     * Create an extent that also records native side effects in an edit's history.
+     *
+     * @param world the world
+     * @param changeSet the edit history, or null to retain untracked side effects
+     */
+    public SideEffectExtent(World world, @Nullable ChangeSet changeSet) {
         super(world);
         checkNotNull(world);
         this.world = world;
+        this.changeSet = changeSet;
     }
 
     public boolean isPostEditSimulationEnabled() {
@@ -89,10 +104,20 @@ public class SideEffectExtent extends AbstractDelegateExtent {
     @Override
     public <B extends BlockStateHolder<B>> boolean setBlock(BlockVector3 location, B block) throws WorldEditException {
         if (postEditSimulation) {
-            positions.put(location, world.getBlock(location));
+            positions.putIfAbsent(location, world.getBlock(location));
+            return world.setBlock(location, block, INTERNAL_NONE);
         }
 
-        return world.setBlock(location, block, postEditSimulation ? INTERNAL_NONE : sideEffectSet);
+        try (BlockChangeCapture _ = captureBlockChanges()) {
+            return world.setBlock(location, block, sideEffectSet);
+        }
+    }
+
+    private BlockChangeCapture captureBlockChanges() {
+        if (changeSet != null && changeSet.isRecordingChanges() && world instanceof BlockChangeCapture.Provider provider) {
+            return provider.captureBlockChanges(changeSet);
+        }
+        return BlockChangeCapture.NONE;
     }
 
     @Override
@@ -121,7 +146,9 @@ public class SideEffectExtent extends AbstractDelegateExtent {
                     Iterator<Map.Entry<BlockVector3, BlockState>> positionIterator = positions.entrySet().iterator();
                     while (run.shouldContinue() && positionIterator.hasNext()) {
                         Map.Entry<BlockVector3, BlockState> position = positionIterator.next();
-                        world.applySideEffects(position.getKey(), position.getValue(), sideEffectSet);
+                        try (BlockChangeCapture _ = captureBlockChanges()) {
+                            world.applySideEffects(position.getKey(), position.getValue(), sideEffectSet);
+                        }
                         positionIterator.remove();
                     }
 

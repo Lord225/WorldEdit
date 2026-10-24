@@ -19,24 +19,43 @@
 
 package com.sk89q.worldedit.bukkit.adapter.impl.v26_3;
 
+import com.sk89q.worldedit.history.change.BlockChange;
+import com.sk89q.worldedit.history.change.SideEffectBlockChange;
+import com.sk89q.worldedit.history.changeset.ChangeSet;
+import com.sk89q.worldedit.internal.wna.BlockChangeCapture;
 import com.sk89q.worldedit.internal.wna.WorldNativeAccess;
+import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldedit.util.SideEffect;
 import com.sk89q.worldedit.util.SideEffectSet;
+import com.sk89q.worldedit.world.block.BaseBlock;
 import com.sk89q.worldedit.world.block.BlockState;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ComparatorBlock;
+import net.minecraft.world.level.block.Fallable;
+import net.minecraft.world.level.block.ScaffoldingBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.redstone.ExperimentalRedstoneUtils;
 import org.bukkit.craftbukkit.CraftWorld;
+import org.bukkit.craftbukkit.block.CraftBlockEntityState;
+import org.bukkit.craftbukkit.block.CraftBlockState;
 import org.bukkit.event.block.BlockPhysicsEvent;
 import org.enginehub.linbus.tree.LinCompoundTag;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import javax.annotation.Nullable;
 
 public class PaperweightWorldNativeAccess implements WorldNativeAccess<LevelChunk, net.minecraft.world.level.block.state.BlockState, BlockPos> {
@@ -46,6 +65,7 @@ public class PaperweightWorldNativeAccess implements WorldNativeAccess<LevelChun
     private final PaperweightAdapter adapter;
     private final WeakReference<ServerLevel> world;
     private SideEffectSet sideEffectSet;
+    private @Nullable CapturedSideEffects capture;
 
     public PaperweightWorldNativeAccess(PaperweightAdapter adapter, WeakReference<ServerLevel> world) {
         this.adapter = adapter;
@@ -59,6 +79,16 @@ public class PaperweightWorldNativeAccess implements WorldNativeAccess<LevelChun
     @Override
     public void setCurrentSideEffectSet(SideEffectSet sideEffectSet) {
         this.sideEffectSet = sideEffectSet;
+    }
+
+    @Override
+    public BlockChangeCapture captureBlockChanges(ChangeSet changeSet) {
+        ServerLevel world = getWorld();
+        if (world.captureBlockStates || world.captureTreeGeneration) {
+            return BlockChangeCapture.NONE;
+        }
+        capture = new CapturedSideEffects(world, changeSet);
+        return capture;
     }
 
     @Override
@@ -131,6 +161,14 @@ public class PaperweightWorldNativeAccess implements WorldNativeAccess<LevelChun
     @Override
     public void notifyNeighbors(BlockPos pos, net.minecraft.world.level.block.state.BlockState oldState, net.minecraft.world.level.block.state.BlockState newState) {
         ServerLevel world = getWorld();
+        if (capture != null) {
+            capture.neighbors.add(pos);
+        }
+        if (newState.getBlock() instanceof ComparatorBlock && sideEffectSet.shouldApply(SideEffect.UPDATE)
+                && newState.canSurvive(world, pos)) {
+            // onPlace only notifies the output; the pasted comparator must also evaluate its inputs.
+            fireNeighborChanged(world, newState.getBlock(), pos);
+        }
         if (sideEffectSet.shouldApply(SideEffect.EVENTS)) {
             world.updateNeighborsAt(pos, oldState.getBlock());
         } else {
@@ -161,6 +199,9 @@ public class PaperweightWorldNativeAccess implements WorldNativeAccess<LevelChun
     @Override
     public void updateNeighbors(BlockPos pos, net.minecraft.world.level.block.state.BlockState oldState, net.minecraft.world.level.block.state.BlockState newState, int recursionLimit) {
         ServerLevel world = getWorld();
+        if (capture != null) {
+            capture.neighbors.add(pos);
+        }
         oldState.updateIndirectNeighbourShapes(world, pos, NOTIFY, recursionLimit);
         if (sideEffectSet.shouldApply(SideEffect.EVENTS)) {
             CraftWorld craftWorld = world.getWorld();
@@ -177,5 +218,110 @@ public class PaperweightWorldNativeAccess implements WorldNativeAccess<LevelChun
     @Override
     public void onBlockStateChange(BlockPos pos, net.minecraft.world.level.block.state.BlockState oldState, net.minecraft.world.level.block.state.BlockState newState) {
         getWorld().updatePOIOnBlockStateChange(pos, oldState, newState);
+    }
+
+    private final class CapturedSideEffects implements BlockChangeCapture {
+        private final ServerLevel world;
+        private final ChangeSet changeSet;
+        private final Map<BlockPos, CraftBlockState> previousStates;
+        private final Map<BlockPos, BlockEntity> previousBlockEntities;
+        private final @Nullable List<ItemEntity> previousDrops;
+        private final Set<BlockPos> neighbors = new LinkedHashSet<>();
+
+        private CapturedSideEffects(ServerLevel world, ChangeSet changeSet) {
+            this.world = world;
+            this.changeSet = changeSet;
+            previousStates = world.capturedBlockStates;
+            previousBlockEntities = world.capturedBlockEntities;
+            previousDrops = world.captureDrops;
+            world.capturedBlockStates = new LinkedHashMap<>();
+            world.capturedBlockEntities = new LinkedHashMap<>();
+            world.captureDrops = new ArrayList<>();
+            world.captureBlockStates = true;
+        }
+
+        @Override
+        public void close() {
+            Map<BlockPos, CraftBlockState> originals = new LinkedHashMap<>();
+            try {
+                int remaining = 512;
+                while (!world.capturedBlockStates.isEmpty() || !neighbors.isEmpty()) {
+                    Set<BlockPos> checks = new LinkedHashSet<>(neighbors);
+                    neighbors.clear();
+                    if (remaining > 0) {
+                        checks.forEach(this::settleUnsupportedNeighbors);
+                    }
+                    List<CraftBlockState> changes = new ArrayList<>(world.capturedBlockStates.values());
+                    world.capturedBlockStates.clear();
+                    installBlockEntities();
+                    for (CraftBlockState previous : changes) {
+                        BlockPos pos = previous.getPosition();
+                        originals.putIfAbsent(pos, previous);
+                        var state = world.getBlockState(pos);
+                        if (remaining > 0) {
+                            // Paper suppresses physics while capturing; replay it to capture the next dependency layer.
+                            world.notifyAndUpdatePhysics(pos, world.getChunkAt(pos), previous.getHandle(), state,
+                                state, previous.getFlags(), remaining);
+                            neighbors.add(pos);
+                        } else {
+                            world.getChunkSource().blockChanged(pos);
+                        }
+                    }
+                    remaining--;
+                }
+            } finally {
+                world.capturedBlockStates.forEach(originals::putIfAbsent);
+                try {
+                    installBlockEntities();
+                    for (CraftBlockState previous : originals.values()) {
+                        BlockPos pos = previous.getPosition();
+                        BaseBlock before = adapter.adapt(previous.getHandle()).toBaseBlock();
+                        if (previous instanceof CraftBlockEntityState<?> blockEntity) {
+                            var tag = blockEntity.getSnapshotNBT();
+                            tag.remove("x");
+                            tag.remove("y");
+                            tag.remove("z");
+                            before = before.toBaseBlock((LinCompoundTag) adapter.toNative(tag));
+                        }
+                        BaseBlock after = adapter.getFullBlock(new org.bukkit.Location(world.getWorld(),
+                            pos.getX(), pos.getY(), pos.getZ()));
+                        if (!before.equals(after)) {
+                            changeSet.add(new SideEffectBlockChange(new BlockChange(
+                                BlockVector3.at(pos.getX(), pos.getY(), pos.getZ()), before, after)));
+                        }
+                    }
+                } finally {
+                    world.captureBlockStates = false;
+                    world.capturedBlockStates = previousStates;
+                    world.capturedBlockEntities = previousBlockEntities;
+                    world.captureDrops = previousDrops;
+                    capture = null;
+                }
+            }
+        }
+
+        private void installBlockEntities() {
+            for (BlockEntity blockEntity : world.capturedBlockEntities.values()) {
+                world.getChunkAt(blockEntity.getBlockPos()).addAndRegisterBlockEntity(blockEntity);
+            }
+            world.capturedBlockEntities.clear();
+        }
+
+        private void settleUnsupportedNeighbors(BlockPos pos) {
+            for (Direction direction : Direction.values()) {
+                BlockPos neighbor = pos.relative(direction);
+                if (world.isOutsideBuildHeight(neighbor)) {
+                    continue;
+                }
+                var state = world.getBlockState(neighbor);
+                Block block = state.getBlock();
+                if (!(block instanceof Fallable) && !(block instanceof ScaffoldingBlock)
+                        && world.getBlockTicks().hasScheduledTick(neighbor, block)
+                        && !state.canSurvive(world, neighbor)) {
+                    // Resolve queued support checks inside the edit, before its history entry is closed.
+                    state.tick(world, neighbor, world.getRandom());
+                }
+            }
+        }
     }
 }

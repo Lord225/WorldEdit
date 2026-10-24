@@ -8,6 +8,7 @@ eclipse
 *.iws
 .kotlin
 
+scraps
 bin
 build
 target

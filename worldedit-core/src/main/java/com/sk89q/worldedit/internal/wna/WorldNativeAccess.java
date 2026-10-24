@@ -20,6 +20,7 @@
 package com.sk89q.worldedit.internal.wna;
 
 import com.sk89q.worldedit.WorldEditException;
+import com.sk89q.worldedit.history.changeset.ChangeSet;
 import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldedit.util.SideEffect;
 import com.sk89q.worldedit.util.SideEffectSet;
@@ -40,6 +41,10 @@ import static com.google.common.base.Preconditions.checkNotNull;
  * @param <NP> the native position type
  */
 public interface WorldNativeAccess<NC, NBS, NP> {
+
+    default BlockChangeCapture captureBlockChanges(ChangeSet changeSet) {
+        return BlockChangeCapture.NONE;
+    }
 
     default <B extends BlockStateHolder<B>> boolean setBlock(BlockVector3 position, B block, SideEffectSet sideEffects) throws WorldEditException {
         checkNotNull(position);

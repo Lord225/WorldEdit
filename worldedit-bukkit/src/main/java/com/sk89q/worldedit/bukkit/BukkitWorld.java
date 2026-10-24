@@ -31,7 +31,9 @@ import com.sk89q.worldedit.bukkit.adapter.UnsupportedVersionEditException;
 import com.sk89q.worldedit.entity.BaseEntity;
 import com.sk89q.worldedit.extent.Extent;
 import com.sk89q.worldedit.function.mask.Mask;
+import com.sk89q.worldedit.history.changeset.ChangeSet;
 import com.sk89q.worldedit.internal.util.LogManagerCompat;
+import com.sk89q.worldedit.internal.wna.BlockChangeCapture;
 import com.sk89q.worldedit.internal.wna.WorldNativeAccess;
 import com.sk89q.worldedit.math.BlockVector2;
 import com.sk89q.worldedit.math.BlockVector3;
@@ -79,7 +81,7 @@ import javax.annotation.Nullable;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-public class BukkitWorld extends AbstractWorld {
+public class BukkitWorld extends AbstractWorld implements BlockChangeCapture.Provider {
 
     private static final Logger LOGGER = LogManagerCompat.getLogger();
 
@@ -95,6 +97,11 @@ public class BukkitWorld extends AbstractWorld {
 
     private final WeakReference<World> worldRef;
     private final WorldNativeAccess<?, ?, ?> worldNativeAccess;
+
+    @Override
+    public BlockChangeCapture captureBlockChanges(ChangeSet changeSet) {
+        return worldNativeAccess == null ? BlockChangeCapture.NONE : worldNativeAccess.captureBlockChanges(changeSet);
+    }
 
     /**
      * Construct the object.
