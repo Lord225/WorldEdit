@@ -303,7 +303,10 @@ public final class PaperweightAdapter implements BukkitImplAdapter {
     static void readTagIntoTileEntity(net.minecraft.nbt.CompoundTag tag, BlockEntity tileEntity) {
         PaperweightLoggingProblemReporter.with(() -> "loading tile entity at " + tileEntity.getBlockPos(), reporter -> {
             tileEntity.loadWithComponents(TagValueInput.create(reporter, MinecraftServer.getServer().registryAccess(), tag));
-            tileEntity.setChanged();
+            // WorldNativeAccess handles neighbor notifications after block placement.
+            if (tileEntity.getLevel() != null) {
+                tileEntity.getLevel().blockEntityChanged(tileEntity.getBlockPos());
+            }
             return null;
         });
     }
