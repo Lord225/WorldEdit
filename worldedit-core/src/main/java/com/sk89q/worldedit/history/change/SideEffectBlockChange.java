@@ -43,8 +43,11 @@ public final class SideEffectBlockChange implements Change {
 
     @Override
     public void undo(UndoContext context) throws WorldEditException {
-        Extent extent = checkNotNull(context.getExtent());
         undone = false;
+        if (!context.isSideEffectUndoEnabled()) {
+            return;
+        }
+        Extent extent = checkNotNull(context.getExtent());
         if (extent.getFullBlock(change.position()).equals(change.current())) {
             extent.setBlock(change.position(), change.previous());
             undone = extent.getFullBlock(change.position()).equals(change.previous());

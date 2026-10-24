@@ -164,6 +164,10 @@ public class PaperweightWorldNativeAccess implements WorldNativeAccess<LevelChun
         if (capture != null) {
             capture.neighbors.add(pos);
         }
+        if (!oldState.is(newState.getBlock())) {
+            // Chunk writes omit removal notifications, including diode output updates through a solid block.
+            oldState.affectNeighborsAfterRemoval(world, pos, false);
+        }
         if (newState.getBlock() instanceof ComparatorBlock && sideEffectSet.shouldApply(SideEffect.UPDATE)
                 && newState.canSurvive(world, pos)) {
             // onPlace only notifies the output; the pasted comparator must also evaluate its inputs.

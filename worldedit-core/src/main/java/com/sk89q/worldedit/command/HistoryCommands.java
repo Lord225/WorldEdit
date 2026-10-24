@@ -33,6 +33,7 @@ import com.sk89q.worldedit.util.formatting.text.TranslatableComponent;
 import org.enginehub.piston.annotation.Command;
 import org.enginehub.piston.annotation.CommandContainer;
 import org.enginehub.piston.annotation.param.Arg;
+import org.enginehub.piston.annotation.param.Switch;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
@@ -54,6 +55,10 @@ public class HistoryCommands {
         this.worldEdit = worldEdit;
     }
 
+    public void undo(Actor actor, LocalSession session, int times, String playerName) throws WorldEditException {
+        undo(actor, session, times, playerName, false);
+    }
+
     @Command(
         name = "undo",
         aliases = { "/undo" },
@@ -64,7 +69,9 @@ public class HistoryCommands {
                      @Arg(desc = "Number of undoes to perform", def = "1")
                          int times,
                      @Arg(name = "player", desc = "Undo this player's operations", def = "")
-                         String playerName) throws WorldEditException {
+                         String playerName,
+                     @Switch(name = 'n', desc = "Use legacy undo without restoring collateral blocks")
+                         boolean naive) throws WorldEditException {
         times = Math.max(1, times);
         LocalSession undoSession = session;
         if (playerName != null) {
@@ -78,7 +85,7 @@ public class HistoryCommands {
         int timesUndone = 0;
         for (int i = 0; i < times; ++i) {
             BlockBag blockBag = actor instanceof Player player ? undoSession.getBlockBag(player) : null;
-            EditSession undone = undoSession.undo(blockBag, actor);
+            EditSession undone = undoSession.undo(blockBag, actor, naive);
             if (undone != null) {
                 timesUndone++;
                 worldEdit.flushBlockBag(actor, undone);

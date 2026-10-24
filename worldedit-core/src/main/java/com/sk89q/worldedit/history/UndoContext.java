@@ -33,6 +33,25 @@ import javax.annotation.Nullable;
 public class UndoContext {
 
     private Extent extent;
+    private boolean sideEffectUndoEnabled = true;
+
+    /**
+     * Whether undo should restore blocks changed indirectly by an edit.
+     *
+     * @return true to include collateral block changes
+     */
+    public boolean isSideEffectUndoEnabled() {
+        return sideEffectUndoEnabled;
+    }
+
+    /**
+     * Set whether undo should include collateral block changes.
+     *
+     * @param enabled true to include collateral block changes
+     */
+    public void setSideEffectUndoEnabled(boolean enabled) {
+        sideEffectUndoEnabled = enabled;
+    }
 
     /**
      * Get the extent set on this context.

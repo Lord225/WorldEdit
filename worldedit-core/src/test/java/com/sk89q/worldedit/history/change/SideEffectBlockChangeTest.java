@@ -177,5 +177,45 @@ class SideEffectBlockChangeTest extends BaseWorldEditTest {
         history.add(collateral(before, air));
         assertEquals(0, history.size());
     }
+
+    @Test
+    void naiveUndoRestoresDirectHistoryWithoutRestoringCollateral() {
+        BlockVector3 support = POSITION.subtract(0, 1, 0);
+        BaseBlock stone = block("stone");
+        BaseBlock wire = block("redstone_wire");
+        BaseBlock air = block("air");
+        BlockOptimizedHistory history = new BlockOptimizedHistory();
+        history.add(new BlockChange(support, stone, air));
+        history.add(collateral(wire, air));
+        blocks.put(support, air);
+        blocks.put(POSITION, air);
+
+        context.setSideEffectUndoEnabled(false);
+        Operations.completeBlindly(ChangeSetExecutor.createUndo(history, context));
+        assertEquals(stone, blocks.get(support));
+        assertEquals(air, blocks.get(POSITION));
+
+        blocks.put(POSITION, wire);
+        context.setSideEffectUndoEnabled(true);
+        Operations.completeBlindly(ChangeSetExecutor.createRedo(history, context));
+        assertEquals(air, blocks.get(support));
+        assertEquals(wire, blocks.get(POSITION));
+    }
+
+    @Test
+    void naiveUndoClearsAnyEarlierCollateralRedoOwnership() throws Exception {
+        BaseBlock before = comparator(13);
+        BaseBlock after = block("air");
+        SideEffectBlockChange change = collateral(before, after);
+        blocks.put(POSITION, after);
+        change.undo(context);
+        blocks.put(POSITION, after);
+
+        context.setSideEffectUndoEnabled(false);
+        change.undo(context);
+        blocks.put(POSITION, before);
+        change.redo(context);
+        assertEquals(before, blocks.get(POSITION));
+    }
 }
 

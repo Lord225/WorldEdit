@@ -884,7 +884,17 @@ public class EditSession implements Extent, AutoCloseable {
      * @param editSession a new {@link EditSession} to perform the undo in
      */
     public void undo(EditSession editSession) {
-        replayHistory(editSession, ChangeSetExecutor.Type.UNDO);
+        undo(editSession, false);
+    }
+
+    /**
+     * Undo this edit, optionally using only its original direct history.
+     *
+     * @param editSession the session to perform the undo in
+     * @param naive true to skip collateral block restoration
+     */
+    public void undo(EditSession editSession, boolean naive) {
+        replayHistory(editSession, ChangeSetExecutor.Type.UNDO, naive);
     }
 
     /**
@@ -893,15 +903,16 @@ public class EditSession implements Extent, AutoCloseable {
      * @param editSession a new {@link EditSession} to perform the redo in
      */
     public void redo(EditSession editSession) {
-        replayHistory(editSession, ChangeSetExecutor.Type.REDO);
+        replayHistory(editSession, ChangeSetExecutor.Type.REDO, false);
     }
 
-    private void replayHistory(EditSession editSession, ChangeSetExecutor.Type type) {
+    private void replayHistory(EditSession editSession, ChangeSetExecutor.Type type, boolean naive) {
         UndoContext context = new UndoContext();
         context.setExtent(editSession.bypassHistory);
+        context.setSideEffectUndoEnabled(!naive);
         boolean postEditSimulation = editSession.sideEffectExtent != null
             && editSession.sideEffectExtent.isPostEditSimulationEnabled();
-        if (editSession.sideEffectExtent != null) {
+        if (!naive && editSession.sideEffectExtent != null) {
             // Restore supports and their dependents before allowing physics to run.
             editSession.sideEffectExtent.setPostEditSimulationEnabled(true);
         }

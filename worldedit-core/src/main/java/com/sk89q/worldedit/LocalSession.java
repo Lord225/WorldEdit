@@ -255,6 +255,18 @@ public class LocalSession {
      * @return whether anything was undone
      */
     public EditSession undo(@Nullable BlockBag newBlockBag, Actor actor) {
+        return undo(newBlockBag, actor, false);
+    }
+
+    /**
+     * Undo an edit, optionally using only its original direct history.
+     *
+     * @param newBlockBag the block bag
+     * @param actor the actor
+     * @param naive true to skip collateral block restoration
+     * @return the undone session, or null if there is no history
+     */
+    public EditSession undo(@Nullable BlockBag newBlockBag, Actor actor, boolean naive) {
         checkNotNull(actor);
         --historyPointer;
         if (historyPointer >= 0) {
@@ -264,7 +276,7 @@ public class LocalSession {
                          .world(editSession.getWorld()).blockBag(newBlockBag).actor(actor)
                          .build()) {
                 prepareEditingExtents(newEditSession, actor);
-                editSession.undo(newEditSession);
+                editSession.undo(newEditSession, naive);
             }
             return editSession;
         } else {
